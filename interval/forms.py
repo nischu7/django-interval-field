@@ -5,7 +5,8 @@ from django.conf import settings
 from django.forms.util import ValidationError
 from django.utils.translation import ugettext as _
 from django.utils.datastructures import SortedDict
-from datetime import timedelta
+
+from . import *
 
 ENABLE_DOJANGO = False
 
@@ -21,12 +22,17 @@ else:
 
 
 format_desc = SortedDict([
+    #('Y', 'years'),
+    #('m', 'months'),
     ('D', 'days'),
     ('H', 'hours'),
     ('M', 'minutes'),
     ('S', 'seconds'),
     ('X', 'microseconds')])
 
+if HAVE_RELATIVEDELTA:
+    format_desc.insert(0, 'Y', 'years')
+    format_desc.insert(1, 'm', 'months')
 
 def check_format(format):
     for letter in format:
@@ -46,34 +52,49 @@ class IntervalWidget(TextInput):
         check_format(self.format)
 
     def render(self, name, value, attrs=None):
-
         if value is None:
             value = dict(days=0, hours=0, minutes=0, seconds=0, microseconds=0)
+            if HAVE_RELATIVEDELTA:
+                value['years'] = 0
+                value['months'] = 0
 
-        if type(value) == timedelta:
-            days = value.days
-            seconds = value.seconds
-            microseconds = value.microseconds
-            hours = minutes = 0
+        if is_delta(value):
+            if HAVE_RELATIVEDELTA:
+                years = value.years
+                months = value.months
+                days = value.days
+                hours = value.hours
+                minutes = value.minutes
+                seconds = value.seconds
 
-            if 'H' in self.format:
-                hours = (seconds / 3600)
-                seconds = seconds - hours * 3600
+                value = dict(years=value.years, months=value.months,
+                        days=value.days, hours=value.hours, minutes=value.minutes,
+                        seconds=value.seconds, microseconds=value.microseconds)
+            else:
+                days = value.days
+                seconds = value.seconds
+                microseconds = value.microseconds
+                hours = minutes = 0
 
-            if 'M' in self.format:
-                minutes = (seconds / 60)
-                seconds = seconds - minutes * 60
+                if 'H' in self.format:
+                    hours = int(seconds / 3600)
+                    seconds = int(seconds - hours * 3600)
 
-            microseconds = value.microseconds
+                if 'M' in self.format:
+                    minutes = int(seconds / 60)
+                    seconds = int(seconds - minutes * 60)
 
-            value = dict(days=days, hours=hours, minutes=minutes,
+                microseconds = value.microseconds
+
+                value = dict(days=days, hours=hours, minutes=minutes,
                          seconds=seconds, microseconds=microseconds)
 
         attrs = self.build_attrs(attrs)
 
         ret = []
         para = dict(
-            name=name, dojoType='', days_label=_('days'),
+            name=name, dojoType='', years_label=_('years'),
+            months_label=_('months'), days_label=_('days'),
             hours_label=_('hours'), minutes_label=_('minutes'),
             seconds_label=_('seconds'), microseconds_label=_('microseconds'))
         para.update(value)
@@ -83,7 +104,7 @@ class IntervalWidget(TextInput):
 
         def _append(subfield):
             ret.append(
-                u'''<input type="text"
+                '''<input type="text"
                 value="%%(%(subfield)s)s"
                 id="%%(name)s_%(subfield)s"
                 name="%%(name)s_%(subfield)s"
@@ -93,7 +114,7 @@ class IntervalWidget(TextInput):
                 <label
                 for="%%(name)s_%(subfield)s"
                 class="interval_label %%(name)s_%(subfield)s_label"
-                >
+                > 
                 %%(%(subfield)s_label)s
                 </label>''' % dict(subfield=subfield))
 
@@ -142,6 +163,10 @@ class IntervalFormField(Field):
 
         kw = dict(days=0, hours=0, minutes=0, seconds=0, microseconds=0)
 
+        if HAVE_RELATIVEDELTA:
+            kw['years'] = 0
+            kw['months'] = 0
+
         for letter, desc in format_desc.items():
 
             if letter not in self.format:
@@ -160,12 +185,11 @@ class IntervalFormField(Field):
                 raiseError(desc)
 
         try:
-            cleaned_value = timedelta(
-                days=kw['days'],
-                seconds=kw['seconds'],
-                minutes=kw['minutes'],
-                hours=kw['hours'],
-                microseconds=kw['microseconds'])
+            if HAVE_RELATIVEDELTA:
+                cleaned_value = relativedelta(**kw)
+            else:
+                cleaned_value = timedelta(**kw)
+
         except OverflowError:
             raise ValidationError(_("This value is too large"))
 
@@ -182,7 +206,7 @@ class IntervalFormField(Field):
                           ) % self.max_value)
 
         if self.required:
-            if cleaned_value == timedelta(0):
+            if (cleaned_value == timedelta(0)) or (HAVE_RELATIVEDELTA and cleaned_value == relativedelta(0)):
                 raise ValidationError(self.default_error_messages['required'])
 
         return Field.clean(self, cleaned_value)

@@ -4,27 +4,26 @@ from django.db import models
 from django.utils.text import capfirst
 from django.utils.translation import ugettext_lazy as _
 
-from datetime import timedelta
+from . import *
 
 from interval.forms import IntervalFormField
 
 day_seconds = 24 * 60 * 60
 microseconds = 1000000
 
-
 def formatError(value):
-    raise ValueError(
-        "please use [[DD]D days,]HH:MM:SS[.ms] instead of %r" % value)
+    raise ValueError("please use [[DD]D days,]HH:MM:SS[.ms] instead of %r" % value)
 
 
 def timedelta_topgsqlstring(value):
     buf = []
-    for attr in ['days', 'seconds', 'microseconds']:
+    for attr in DELTA_ATTRIBUTES:
         v = getattr(value, attr)
         if v:
             buf.append('%i %s' % (v, attr.upper()))
     if not buf:
         return '0'
+
     return " ".join(buf)
 
 
@@ -89,17 +88,18 @@ class IntervalField(models.Field):
         return 'BIGINT'
 
     def to_python(self, value):
-        if isinstance(value, timedelta):
-            # psycopg2 will return a timedelta() for INTERVAL type column
-            # in database
+        # psycopg2 will return a timedelta() for INTERVAL type column in database
+        # ...or relativedelta() when using psycopg2_dateutils
+        if is_delta(value):
             return value
 
-        if value is None or value is '' or value is u'':
+        if value is None or value is '':
             return None
 
         # string forms: in form like "X days, HH:MM:SS.ms" (can be used in
         # fixture files)
-        if isinstance(value, basestring) and value.find(":") >= 0:
+        """ TODO: Fix this
+        if isinstance(value, str) and value.find(":") >= 0:
             days = 0
 
             if value.find("days,") >= 0 or value.find("day,") >= 0:
@@ -137,6 +137,7 @@ class IntervalField(models.Field):
             return timedelta(
                 days=days, hours=h, minutes=m,
                 seconds=s, microseconds=ms)
+        """
 
         # other database backends:
         return timedelta(seconds=float(value) / microseconds)
@@ -146,10 +147,11 @@ class IntervalField(models.Field):
             return None
 
         if connection.settings_dict['ENGINE'].find('postgresql') >= 0:
-			if isinstance(value, basestring):
-				# Can happen, when using south migrations
-				return value
-			return timedelta_topgsqlstring(value)
+            #if isinstance(value, basestring):
+            if isinstance(value, str):
+                # Can happen, when using south migrations
+                return value
+            return timedelta_topgsqlstring(value)
 
         return timedelta_tobigint(value)
 
